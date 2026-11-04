@@ -96,10 +96,56 @@ def task1_pipelines():
     categorical, numeric = feature_columns(trainDF)
     # TODO: indexer, encoder, assembler, LinearRegression; fit the Pipeline on trainDF;
     #       results.append(evaluate("full", <predictions on testDF>)); save the model
-    return None
+
+    indexed_cols = [f"{c}_idx" for c in categorical]
+
+    indexer = StringIndexer(
+        inputCols=categorical,
+        outputCols=indexed_cols,
+        handleInvalid="skip"
+    )
+
+    #One-hot encodeing categorical columns
+    encoded_cols = [f"{c}_ohe" for c in categorical]
+
+    encoder = OneHotEncoder(
+        inputCols=indexed_cols,
+        outputCols=encoded_cols
+    )
+
+    #Combining categorical and numerical features
+    assembler = VectorAssembler(
+        inputCols=encoded_cols + numeric,
+        outputCol="features"
+    )
+
+    # Regression model
+    lr_full = LinearRegression(
+        featuresCol="features",
+        labelCol="price"
+    )
+
+    # building the pipeline
+    full_pipeline = Pipeline(
+        stages=[indexer, encoder, assembler, lr_full]
+    )
+
+    #fit on training data
+    full_model = full_pipeline.fit(trainDF)
+
+    # evaluating the test data
+    full_predictions = full_model.transform(testDF)
+    results.append(evaluate("full", full_predictions))
+
+    #fitted Pipeline model
+    full_model.write().overwrite().save(model_dir)
+
+    print(f"Full PipelineModel saved to: {model_dir}")
+
+    return results
 
 
-# ---------------------------------------------------------------- Task 2: score with the saved model
+# ------------------------------ Task 2: score with the saved model
 def task2_score():
     """A scoring job: no training data, no fit(). Load the PipelineModel from model_dir,
     transform the test listings (data/split/test), and write neighbourhood_cleansed,
@@ -108,10 +154,42 @@ def task2_score():
     RMSE of its predictions. Return the DataFrame you wrote.
     """
     # TODO
-    return None
+     #Loading the saved PipelineModel
+    model = PipelineModel.load(model_dir)
+
+    #show all pipeline stage class names
+    print("\nLoaded PipelineModel stages:")
+    for stage in model.stages:
+        print(type(stage).__name__)
+
+    #loading the test data
+    trainDF, testDF = load_split()
+
+    #Transforming test data
+    predictions = model.transform(testDF)
+
+    #RMSE
+    rmse = rmse_eval.evaluate(predictions)
+    print(f"\nTask 2 RMSE: {rmse:.1f}")
+
+    outputDF = predictions.select(
+        "neighbourhood_cleansed",
+        "room_type",
+        "bedrooms",
+        "price",
+        sround(col("prediction"), 1).alias("prediction")
+    )
+    outputDF.write \
+        .mode("overwrite") \
+        .option("header", True) \
+        .csv(f"{out_dir}/predictions")
+
+    print(f"Predictions saved to: {out_dir}/predictions")
+
+    return outputDF
 
 
-# ---------------------------------------------------------------- main
+# --------------------------------------- main
 if task == "task1":
     result = task1_pipelines()
     if result: save_metrics(result)
